@@ -7,14 +7,16 @@
 
 class DMX_Tour : public DMX, public Adafruit_NeoPixel
 {
-  private:
+    private:
     uint32_t colorTour;
     uint32_t oldcolorTour;
     bool hasBorderColorChanged;
-
+    int Nb_Led;
+  
   public:
+  
     //Fait appel au constructeur de DMX et de Adafruit_Neopixel, initialise la variable hasBorderColorChanged
-    DMX_Tour(int Ad, int pin, int nb_Led);
+    DMX_Tour(int pin, int nb_Led);
 
     //Initialise le bandeau avec les canaux DMX, et un séquence d'allumage
     void Init(int Chan_R, int Chan_G, int Chan_B);
@@ -24,6 +26,8 @@ class DMX_Tour : public DMX, public Adafruit_NeoPixel
     
     uint32_t GET_colorTour() ; 
     bool GET_hasBorderColorChanged() ; 
+    int GET_NbLed();
+
 };
 
 #endif // DMX_TOUR_H

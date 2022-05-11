@@ -1,38 +1,38 @@
+
 #include "DMX.h"
 #include "ANIM.h"
-#include <LXESP8266UARTDMX.h>
 
-ANIM::ANIM (int channel_a, int channel_speed, int Ad) : DMX(Ad){
+ANIM::ANIM (int channel_a, int channel_speed, DMX_Tour * Tour) : DMX(){
   
   channel_anim = channel_a ; 
   channel_speed = channel_speed ; 
+  this->Tour = Tour ;
     
-  last_text_update_time = 0;
   last_border_update_time = 0;
-
-  TIMEOUT_DMX = 0 ; 
   last_frame_time = 0 ; 
   tempo = 0 ; 
 
-  currentAnimation = 0 ; 
+  currentAnimation = 0 ;
   currentAnimationFrame = 0 ;
-
+ 
   hasAnimationBeenInitialized = false ; 
   hasAnimationChanged = true ;
 
   NUMBER_OF_ANIMATION = 5 ; 
 }
 
-//Dans le cas de la classe ANIM, currentDMXCommand[0] correspond au canal de l'animation et currentDMXCommand[1] au cnaal de vitesse de l'animation
+//Dans le cas de la classe ANIM, currentDMXCommand[0] correspond au canal de l'animation et currentDMXCommand[1] au canal de vitesse de l'animation
 
 byte ANIM::getAnimation(){
   // 255 / Number_of_animation permet de créer des intervalles correspondants aux différentes animations
   //On récupère ensuite la valeur envoyer sur le canal DMX et la compare au intervalles pour déterminer l'animation voulue
   byte out = (byte) currentDMXCommand[0] / (255 / NUMBER_OF_ANIMATION);
-  if (out < NUMBER_OF_ANIMATION) return out; // Si read(addr) = 255 return max value
-  else 
-    return (NUMBER_OF_ANIMATION - 1);
+  if (out <= NUMBER_OF_ANIMATION) return out;
+
+  //Dans le cas où l'instruction DMX vaut plus de 255 (ce qui n'est pas sensé être possible), on considère qu'on veut l'animation 5
+  else return (NUMBER_OF_ANIMATION - 1);
 }
+
 
 int ANIM::GET_tempo (byte animation) {
   switch (animation) {
@@ -52,8 +52,8 @@ int ANIM::GET_tempo (byte animation) {
 bool ANIM::HasChanged(){
    boolean flag = false;
   for (size_t i = 0; i < 2 ; i++) {
-    if (currentDMXCommand[i] != ESP8266DMX.getSlot(this->DMX_ADDRESS + i + channel_anim )) {
-      currentDMXCommand[i] = ESP8266DMX.getSlot(this->DMX_ADDRESS + i + channel_anim);
+    if (currentDMXCommand[i] != ESP8266DMX.getSlot(DMX_ADDRESS + i + channel_anim )) {
+      currentDMXCommand[i] = ESP8266DMX.getSlot(DMX_ADDRESS + i + channel_anim);
       flag = true;
     }
   }
@@ -63,65 +63,104 @@ bool ANIM::HasChanged(){
 void ANIM::ResetProgress(){
    currentAnimationFrame = 0; // On recommence à l'étape 1
    currentAnimation = getAnimation(); // On set la nouvelle animation
-   hasAnimationBeenInitialized = false;  
+   hasAnimationBeenInitialized = false; 
+}
+
+void ANIM::Update_Anim(){
+  if (getAnimation() != currentAnimation) { // Si on a changé d'animation on reset les progressions
+     ResetProgress(); 
+  }
+  //On change la valeur de tempo pour correspondre à la tempo de l'animation voulue
+  tempo = GET_tempo(currentAnimation);  
+}
+
+void ANIM::Basic(){
+  //On met simplement toutes les LED à la couleur voulue
+  for(int i = 0; i < (Tour->GET_NbLed()); i++) {
+    Tour->setPixelColor(i, Tour->GET_colorTour());
+  }
+  hasAnimationChanged = true;
+  hasAnimationBeenInitialized = true;
+}
+
+void ANIM::Load(){
+  if (!hasAnimationBeenInitialized || currentAnimationFrame == 0) { //Si on est au début de l'animation, on clear les LED
+    Tour->clear();
+    hasAnimationBeenInitialized = true;
+  }
+  //Si la couleur du tour change durant l'animation, on le prend en compte et on change la couleur de toutes les LED
+  if (Tour->GET_hasBorderColorChanged()) {
+    for(int i = 0; i < currentAnimationFrame; i++) {
+      Tour->setPixelColor(i, Tour->GET_colorTour());
+    }
+  }
+
+  // Si on est à t+x du début de l'animation, on allume la diode x
+  if (currentAnimationFrame > 0) {
+    Tour->setPixelColor(currentAnimationFrame - 1,  Tour->GET_colorTour());
+  }
+
+  currentAnimationFrame = (currentAnimationFrame + 1) % Tour->GET_NbLed();
+  hasAnimationChanged = true;
+}
+
+void ANIM::Chase(){
+  Tour->fill(Tour->GET_colorTour()); //On allume toutes les LED
+
+  //On éteint des LED les unes à la suite de l'autre
+  for(int i = 0; i < 10; i++) {
+    Tour->setPixelColor(i * Tour->GET_NbLed() / 10 + currentAnimationFrame, 0);
+  }
+  currentAnimationFrame = currentAnimationFrame + 1;
+  hasAnimationChanged = true;
+}
+
+void ANIM::Eiffel(){
+  //A chaque fois, on allume quatre LED aléatoirement et on éteint les autres
+  Tour->clear();
+  Tour->setPixelColor(random(Tour->GET_NbLed()), Tour->GET_colorTour());
+  Tour->setPixelColor(random(Tour->GET_NbLed()), Tour->GET_colorTour());
+  Tour->setPixelColor(random(Tour->GET_NbLed()), Tour->GET_colorTour());
+  Tour->setPixelColor(random(Tour->GET_NbLed()), Tour->GET_colorTour());
+  hasAnimationChanged = true;
+}
+
+void ANIM::Rainbow(){
+  for (int i = 0; i < Tour->GET_NbLed(); i++) {
+    int colorOffset = (i + currentAnimationFrame) % Tour->GET_NbLed();
+    uint16_t hueValue = map(colorOffset, 0, Tour->GET_NbLed(), 0, 65535);
+    uint32_t rgbColor = Tour->ColorHSV(hueValue, 255, 255);
+    Tour->setPixelColor(i, rgbColor);
+  }
+  currentAnimationFrame = currentAnimationFrame + 1;
+  hasAnimationChanged = true;
 }
 
 bool ANIM::Check_Frame(){
-  return (millis() - last_frame_time > tempo) ; 
+  return ((millis() - last_frame_time) > tempo) ; 
 }
 
-bool ANIM::Check_Border(){
-  return (millis() - last_border_update_time > TIMEOUT_DMX) ; 
-}
-
-bool ANIM::Check_Text(){
-  return (millis() - last_text_update_time > TIMEOUT_DMX) ; 
-}
-
-void ANIM::Set_Frame(){  
+void ANIM::Set_Frame(){
   last_frame_time = millis(); 
 }
 
-void ANIM::Set_Border(){
+bool ANIM::Check_border(){
+  return ((millis() - last_border_update_time) > 0) ; 
+}
+
+void ANIM::Set_border(){
   last_border_update_time = millis(); 
 }
 
-void ANIM::Set_Text(){
-  last_text_update_time = millis();
-}
 
-bool ANIM::checkStateAnimation(){
-return ( getAnimation() != currentAnimation) ;  
-}
-
-bool ANIM::GET_hasAnimationBeenInitialized (){
-  return hasAnimationBeenInitialized ;
+void ANIM::SET_hasAnimationChanged (bool state){
+  hasAnimationChanged = state ; 
 }
 
 byte ANIM::GET_currentAnimation (){
   return currentAnimation ; 
 }
 
-int ANIM::GET_currentAnimationFrame(){
-  return currentAnimationFrame ; 
-}
-
 bool ANIM::GET_hasAnimationChanged(){
   return hasAnimationChanged ; 
-}
-
-void ANIM::SET_tempo (int t){
-  tempo = t ; 
-}
-
-void ANIM::SET_hasAnimationBeenInitialized(bool state){
-  hasAnimationBeenInitialized = state ; 
-}
-
-void ANIM::SET_hasAnimationChanged (bool state){
-  hasAnimationChanged = state ; 
-}
-
-void ANIM::SET_currentAnimationFrame (int current_frame){
-  currentAnimationFrame = current_frame ;   
 }
